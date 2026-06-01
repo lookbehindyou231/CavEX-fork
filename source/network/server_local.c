@@ -115,6 +115,73 @@ void server_local_send_inv_changes(set_inv_slot_t changes,
 	}
 }
 
+/* NEW: get block type from server world, returns BLOCK_AIR if not loaded */
+static uint8_t get_block_type(struct server_local* s, w_coord_t x, w_coord_t y, w_coord_t z) {
+	struct block_data blk;
+	if(server_world_get_block(&s->world, x, y, z, &blk))
+		return blk.type;
+	return BLOCK_AIR;
+}
+
+/* NEW: set a portal block and notify client */
+static void set_portal_block(struct server_local* s, w_coord_t x, w_coord_t y, w_coord_t z, uint8_t metadata) {
+	server_world_set_block(&s->world, x, y, z,
+		(struct block_data) { .type = BLOCK_PORTAL, .metadata = metadata });
+	clin_rpc_send(&(struct client_rpc) {
+		.type = CRPC_BLOCK_UPDATE,
+		.payload.block_update.x = x,
+		.payload.block_update.y = y,
+		.payload.block_update.z = z,
+		.payload.block_update.block = (struct block_data) {
+			.type = BLOCK_PORTAL, .metadata = metadata },
+	});
+}
+
+/* NEW: try to fill a nether portal frame
+   axis=0: frame along X, axis=1: frame along Z */
+static bool try_fill_portal(struct server_local* s, w_coord_t x, w_coord_t y, w_coord_t z, int axis) {
+	w_coord_t dx = (axis == 0) ? 1 : 0;
+	w_coord_t dz = (axis == 1) ? 1 : 0;
+
+	while(y > 0 && get_block_type(s, x, y - 1, z) == BLOCK_AIR)
+		y--;
+
+	while(get_block_type(s, x - dx, y, z - dz) == BLOCK_AIR) {
+		x -= dx;
+		z -= dz;
+	}
+
+	if(get_block_type(s, x,      y - 1, z     ) != BLOCK_OBSIDIAN) return false;
+	if(get_block_type(s, x + dx, y - 1, z + dz) != BLOCK_OBSIDIAN) return false;
+	if(get_block_type(s, x,      y + 3, z     ) != BLOCK_OBSIDIAN) return false;
+	if(get_block_type(s, x + dx, y + 3, z + dz) != BLOCK_OBSIDIAN) return false;
+
+	for(int i = 0; i < 3; i++)
+		if(get_block_type(s, x - dx, y + i, z - dz) != BLOCK_OBSIDIAN) return false;
+
+	for(int i = 0; i < 3; i++)
+		if(get_block_type(s, x + 2 * dx, y + i, z + 2 * dz) != BLOCK_OBSIDIAN) return false;
+
+	for(int i = 0; i < 2; i++) {
+		for(int j = 0; j < 3; j++) {
+			uint8_t t = get_block_type(s, x + i * dx, y + j, z + i * dz);
+			if(t != BLOCK_AIR && t != BLOCK_FIRE) return false;
+		}
+	}
+
+	uint8_t meta = (axis == 0) ? 1 : 2;
+	for(int i = 0; i < 2; i++)
+		for(int j = 0; j < 3; j++)
+			set_portal_block(s, x + i * dx, y + j, z + i * dz, meta);
+
+	return true;
+}
+
+/* NEW: attempt to ignite a portal at the given fire position */
+static void try_ignite_portal(struct server_local* s, w_coord_t x, w_coord_t y, w_coord_t z) {
+	try_fill_portal(s, x, y, z, 0) || try_fill_portal(s, x, y, z, 1);
+}
+
 static void server_local_process(struct server_rpc* call, void* user) {
 	assert(call && user);
 
@@ -242,7 +309,46 @@ static void server_local_process(struct server_rpc* call, void* user) {
 					inventory_get_hotbar_item(&s->player.inventory, &it_data);
 					struct item* it = item_get(&it_data);
 
-					if(blocks[blk_on.type]
+					/* NEW: flint and steel places fire */
+					if(it && it_data.id == ITEM_FLINT_STEEL) {
+						if(call->payload.block_place.side == SIDE_TOP
+						   && blk_where.type == BLOCK_AIR) {
+							w_coord_t fx = call->payload.block_place.x + x;
+							w_coord_t fy = call->payload.block_place.y + y;
+							w_coord_t fz = call->payload.block_place.z + z;
+
+							server_world_set_block(&s->world, fx, fy, fz,
+								(struct block_data) { .type = BLOCK_FIRE, .metadata = 0 });
+
+							clin_rpc_send(&(struct client_rpc) {
+								.type = CRPC_BLOCK_UPDATE,
+								.payload.block_update.x = fx,
+								.payload.block_update.y = fy,
+								.payload.block_update.z = fz,
+								.payload.block_update.block = (struct block_data) {
+									.type = BLOCK_FIRE, .metadata = 0 },
+							});
+
+							try_ignite_portal(s, fx, fy, fz);
+
+							size_t slot = inventory_get_hotbar(&s->player.inventory);
+							it_data.durability++;
+							if(it_data.durability >= 65) {
+								inventory_consume(&s->player.inventory,
+												  slot + INVENTORY_SLOT_HOTBAR);
+							} else {
+								s->player.inventory.items[slot + INVENTORY_SLOT_HOTBAR] = it_data;
+							}
+
+							clin_rpc_send(&(struct client_rpc) {
+								.type = CRPC_INVENTORY_SLOT,
+								.payload.inventory_slot.window = WINDOWC_INVENTORY,
+								.payload.inventory_slot.slot = slot + INVENTORY_SLOT_HOTBAR,
+								.payload.inventory_slot.item
+								= s->player.inventory.items[slot + INVENTORY_SLOT_HOTBAR],
+							});
+						}
+					} else if(blocks[blk_on.type]
 					   && blocks[blk_on.type]->onRightClick) {
 						blocks[blk_on.type]->onRightClick(
 							s, &it_data, &where, &on,
@@ -272,7 +378,6 @@ static void server_local_process(struct server_rpc* call, void* user) {
 			}
 			break;
 		case SRPC_UNLOAD_WORLD:
-			// save chunks here, then destroy all
 			clin_rpc_send(&(struct client_rpc) {
 				.type = CRPC_WORLD_RESET,
 				.payload.world_reset.dimension = s->player.dimension,
@@ -379,7 +484,6 @@ static void server_local_update(struct server_local* s) {
 	w_coord_t cx, cz;
 	if(server_world_furthest_chunk(&s->world, MAX_VIEW_DISTANCE, px, pz, &cx,
 								   &cz)) {
-		// unload just one chunk
 		server_world_save_chunk(&s->world, true, cx, cz);
 		clin_rpc_send(&(struct client_rpc) {
 			.type = CRPC_UNLOAD_CHUNK,
@@ -388,7 +492,6 @@ static void server_local_update(struct server_local* s) {
 		});
 	}
 
-	// iterate over all chunks that should be loaded
 	bool c_nearest = false;
 	w_coord_t c_nearest_x, c_nearest_z;
 	w_coord_t c_nearest_dist2 = INT_MAX;
@@ -408,7 +511,6 @@ static void server_local_update(struct server_local* s) {
 		}
 	}
 
-	// load just one chunk
 	struct server_chunk* sc;
 	if(c_nearest
 	   && server_world_load_chunk(&s->world, c_nearest_x, c_nearest_z, &sc)) {

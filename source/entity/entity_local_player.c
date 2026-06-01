@@ -148,6 +148,34 @@ static bool entity_tick(struct entity* e) {
 		entity_try_move(e, e->pos, e->vel, &bbox, (size_t[]) {1, 0, 2}[k],
 						&collision_xz, &e->on_ground);
 
+	// ============================
+	// PORTAL LOGIC
+	// ============================
+	if(e->data.local_player.request_dimension == -1) {
+		struct block_data blk;
+
+		if(entity_get_block(e,
+			floorf(e->pos[0]),
+			floorf(e->pos[1]),
+			floorf(e->pos[2]),
+			&blk))
+		{
+			if(blk.type == BLOCK_PORTAL) {
+				if(e->data.local_player.jump_ticks == 0) {
+					e->data.local_player.portal_triggered = true;
+
+					struct world* w = (struct world*)e->world;
+					if(w->dimension == WORLD_DIM_OVERWORLD) {
+						e->data.local_player.request_dimension = WORLD_DIM_NETHER;
+					} else {
+						e->data.local_player.request_dimension = WORLD_DIM_OVERWORLD;
+					}
+				}
+			}
+		}
+	}
+	// ============================
+
 	if(e->on_ground) {
 		bool collision = false;
 		bool ground = e->on_ground;
@@ -238,4 +266,6 @@ void entity_local_player(uint32_t id, struct entity* e, struct world* w) {
 
 	entity_default_init(e, false, w);
 	e->data.local_player.jump_ticks = 0;
+	e->data.local_player.portal_triggered = false;
+	e->data.local_player.request_dimension = -1;
 }

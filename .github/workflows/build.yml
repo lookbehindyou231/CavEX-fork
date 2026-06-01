@@ -1,0 +1,59 @@
+name: Build CavEX
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkitppc:latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install m-lib
+        run: |
+          git clone https://github.com/P-p-H-d/mlib /tmp/mlib
+          mkdir -p /opt/devkitpro/devkitPPC/powerpc-eabi/include/m-lib/
+          cp /tmp/mlib/*.h /opt/devkitpro/devkitPPC/powerpc-eabi/include/m-lib/
+
+      - name: Install cglm
+        run: |
+          git clone https://github.com/recp/cglm /tmp/cglm
+          mkdir -p source/cglm
+          cp -r /tmp/cglm/include/cglm/* source/cglm/
+
+      - name: Install parson
+        run: |
+          git clone https://github.com/kgabis/parson /tmp/parson
+          mkdir -p source/parson
+          cp /tmp/parson/parson.h /tmp/parson/parson.c source/parson/
+
+      - name: Install cNBT
+        run: |
+          git clone https://github.com/chmod222/cNBT /tmp/cNBT
+          mkdir -p source/cNBT
+          cp /tmp/cNBT/buffer.c /tmp/cNBT/buffer.h /tmp/cNBT/list.h /tmp/cNBT/nbt_loading.c /tmp/cNBT/nbt_parsing.c /tmp/cNBT/nbt_treeops.c /tmp/cNBT/nbt_util.c /tmp/cNBT/nbt.h source/cNBT/
+
+      - name: Install lodepng
+        run: |
+          git clone https://github.com/lvandeve/lodepng /tmp/lodepng
+          mkdir -p source/lodepng
+          cp /tmp/lodepng/lodepng.h source/lodepng/
+          cp /tmp/lodepng/lodepng.cpp source/lodepng/lodepng.c
+
+      - name: Install ppc-zlib
+        run: dkp-pacman -S ppc-zlib --noconfirm || true
+
+      - name: Build
+        run: make
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cavex
+          path: |
+            *.dol
+            *.elf

@@ -1,59 +1,43 @@
 /*
 	Copyright (c) 2022 ByteBit/xtreme8000
-
 	This file is part of CavEX.
-
 	CavEX is free software: you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
 	the Free Software Foundation, either version 3 of the License, or
 	(at your option) any later version.
-
 	CavEX is distributed in the hope that it will be useful,
 	but WITHOUT ANY WARRANTY; without even the implied warranty of
 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 	GNU General Public License for more details.
-
 	You should have received a copy of the GNU General Public License
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
-
 #ifndef WORLD_H
 #define WORLD_H
-
 #include <m-lib/m-dict.h>
 #include <stddef.h>
 #include <stdint.h>
-
 #include "cglm/cglm.h"
-
 #include "block/blocks_data.h"
 #include "stack.h"
-
 #define WORLD_HEIGHT 128
-
 enum world_dim {
 	WORLD_DIM_NETHER = -1,
 	WORLD_DIM_OVERWORLD = 0,
 };
-
 #include "block/aabb.h"
 #include "chunk.h"
 #include "game/camera.h"
 #include "util.h"
-
 #define COLUMN_HEIGHT ((WORLD_HEIGHT + CHUNK_SIZE - 1) / CHUNK_SIZE)
-
 struct world_section {
 	uint8_t heightmap[CHUNK_SIZE * CHUNK_SIZE];
 	struct chunk* column[COLUMN_HEIGHT];
 };
-
 #define SECTION_TO_ID(x, z)                                                    \
 	(((int64_t)(z) << 32) | (((int64_t)(x) & 0xFFFFFFFF)))
-
 DICT_DEF2(dict_wsection, int64_t, M_BASIC_OPLIST, struct world_section,
 		  M_POD_OPLIST)
-
 struct world {
 	dict_wsection_t sections;
 	struct chunk* world_chunk_cache;
@@ -63,7 +47,6 @@ struct world {
 	struct stack lighting_updates;
 	enum world_dim dimension;
 };
-
 void world_create(struct world* w);
 void world_destroy(struct world* w);
 void world_unload_section(struct world* w, w_coord_t x, w_coord_t z);
@@ -93,5 +76,5 @@ size_t world_render(struct world* w, struct camera* c, bool pass);
 bool world_aabb_intersection(struct world* w, struct AABB* a);
 size_t world_loaded_chunks(struct world* w);
 const float* world_dimension_light(struct world* w);
-
+void world_set_dimension(struct world* w, int dimension); /* NEW: switch overworld/nether */
 #endif

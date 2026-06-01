@@ -158,6 +158,7 @@ void world_create(struct world* w) {
 				 sizeof(struct world_modification_entry));
 	w->world_chunk_cache = NULL;
 	w->anim_timer = time_get();
+	w->dimension = WORLD_DIM_OVERWORLD; /* NEW: init dimension */
 }
 
 void world_destroy(struct world* w) {
@@ -617,4 +618,11 @@ const float* world_dimension_light(struct world* w) {
 
 	return (w->dimension == WORLD_DIM_OVERWORLD) ? light_lookup_overworld :
 												   light_lookup_nether;
+}
+
+/* NEW: unload all chunks and switch dimension */
+void world_set_dimension(struct world* w, int dimension) {
+	assert(w);
+	world_unload_all(w);
+	w->dimension = (enum world_dim)dimension;
 }
